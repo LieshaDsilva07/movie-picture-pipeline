@@ -85,7 +85,7 @@ jobs:
       - name: Build Docker image
         working-directory: starter/frontend
         env:
-          REACT_APP_MOVIE_API_URL: http://localhost:5000
+          REACT_APP_MOVIE_API_URL: http://af9990c4174cd4dc3ab986760e6fe1c5-1291024837.us-east-1.elb.amazonaws.com
           ECR_REPOSITORY: 972352813246.dkr.ecr.us-east-1.amazonaws.com/frontend
           IMAGE_TAG: ${{ github.sha }}
         run: |
@@ -147,4 +147,3 @@ jobs:
         run: |
           kubectl rollout status deployment/frontend --timeout=120s
           kubectl get deployment frontend
-          
