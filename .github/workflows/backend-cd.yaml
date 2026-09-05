@@ -1,0 +1,156 @@
+name: Backend Continuous Deployment
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "starter/backend/**"
+
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: Lint Backend
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: starter/backend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Pipenv
+        run: pip install pipenv
+
+      - name: Install dependencies
+        run: pipenv install --dev --skip-lock
+
+      - name: Install Flake8
+        run: pipenv run python -m pip install flake8
+
+      - name: Check Flake8
+        run: pipenv run python -m flake8 --version
+
+      - name: Run lint
+        run: pipenv run lint
+
+  test:
+    name: Test Backend
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: starter/backend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Pipenv
+        run: pip install pipenv
+
+      - name: Install dependencies
+        run: pipenv install --dev --skip-lock
+
+      - name: Run tests
+        run: pipenv run test
+
+  build-and-push:
+    name: Build and Push Backend
+    runs-on: ubuntu-latest
+
+    needs:
+      - lint
+      - test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build Docker image
+        working-directory: starter/backend
+        env:
+          ECR_REPOSITORY: 972352813246.dkr.ecr.us-east-1.amazonaws.com/backend
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+            --tag "$ECR_REPOSITORY:$IMAGE_TAG" \
+            .
+
+      - name: Push Docker image
+        env:
+          ECR_REPOSITORY: 972352813246.dkr.ecr.us-east-1.amazonaws.com/backend
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker push "$ECR_REPOSITORY:$IMAGE_TAG"
+
+  deploy:
+    name: Deploy Backend
+    runs-on: ubuntu-latest
+
+    needs:
+      - build-and-push
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: latest
+
+      - name: Install Kustomize
+        uses: imranismail/setup-kustomize@v2
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name cluster --region us-east-1
+
+      - name: Update backend image
+        working-directory: starter/backend/k8s
+        env:
+          ECR_REPOSITORY: 972352813246.dkr.ecr.us-east-1.amazonaws.com/backend
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          kustomize edit set image backend="$ECR_REPOSITORY:$IMAGE_TAG"
+
+      - name: Deploy backend
+        working-directory: starter/backend/k8s
+        run: |
+          kustomize build . | kubectl apply -f -
+
+      - name: Verify backend deployment
+        run: |
+          kubectl rollout status deployment/backend --timeout=120s
+          kubectl get deployment backend
+          
